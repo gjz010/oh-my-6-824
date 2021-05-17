@@ -1,13 +1,29 @@
 package kvraft
 
-import "6.824/labrpc"
-import "crypto/rand"
-import "math/big"
+import (
+	"crypto/rand"
+	"fmt"
+	"log"
+	"math/big"
+	"sync"
+	"time"
 
+	"6.824/labrpc"
+)
 
 type Clerk struct {
-	servers []*labrpc.ClientEnd
+	servers                                     []*labrpc.ClientEnd
+	lastLeader                                  int
+	clientId                                    int64
+	clientSerial                                int64
+	lockSoThatClientWillNotSendMultipleRequests sync.Mutex
 	// You will have to modify this struct.
+}
+
+func (ck *Clerk) getNextSerial() int64 {
+	serial := ck.clientSerial
+	ck.clientSerial++
+	return serial
 }
 
 func nrand() int64 {
@@ -20,8 +36,19 @@ func nrand() int64 {
 func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
 	ck.servers = servers
+	ck.clientSerial = 0
+	ck.clientId = nrand()
+	ck.lastLeader = 0
 	// You'll have to add code here.
 	return ck
+}
+
+func (ck *Clerk) tracef(msg string, args ...interface{}) {
+	if ClientTraceEnabled {
+		m := fmt.Sprintf(msg, args...)
+		now := time.Now()
+		fmt.Printf("[KVCk][%d-%d-%d-%d][%d] %s\n", now.Hour(), now.Minute(), now.Second(), now.Nanosecond(), ck.clientId, m)
+	}
 }
 
 //
@@ -37,9 +64,54 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 // arguments. and reply must be passed as a pointer.
 //
 func (ck *Clerk) Get(key string) string {
+	ck.lockSoThatClientWillNotSendMultipleRequests.Lock()
+	defer ck.lockSoThatClientWillNotSendMultipleRequests.Unlock()
+	leader := ck.lastLeader
+	args := GetArgs{Key: key, ClientId: ck.clientId, ClientSerial: ck.getNextSerial()}
+	reply := GetReply{}
+	ck.tracef("Sending request %+v", args)
+GET_LOOP:
+	for {
+		ck.tracef("Trying server %d", leader)
+		ok := ck.servers[leader].Call("KVServer.Get", &args, &reply)
+		if !ok {
+			ck.tracef("Sending request %+v failed.", args)
+			leader++
+			if leader >= len(ck.servers) {
+				leader = 0
+			}
+			continue // try again
+		}
+		switch reply.Err {
+		case OK:
+			break GET_LOOP
+		case ErrKilled:
+			ck.tracef("Killed")
+			reply = GetReply{}
+			leader++
+			if leader >= len(ck.servers) {
+				leader = 0
+			}
+		case ErrWrongLeader:
+			ck.tracef("Wrong leader")
+			reply = GetReply{}
+			leader++
+			if leader >= len(ck.servers) {
+				leader = 0
+			}
+		case ErrOutdatedOp:
+			// well let's try again.
+			// This time it will succeed.
+			reply = GetReply{}
+			args.ClientSerial = ck.getNextSerial()
+			continue GET_LOOP
+		case ErrButItIsYouWhoTimedoutFirst:
+			log.Panicln("This should not happen.")
+		}
+	}
 
-	// You will have to modify this function.
-	return ""
+	ck.lastLeader = leader
+	return reply.Value
 }
 
 //
@@ -53,7 +125,49 @@ func (ck *Clerk) Get(key string) string {
 // arguments. and reply must be passed as a pointer.
 //
 func (ck *Clerk) PutAppend(key string, value string, op string) {
-	// You will have to modify this function.
+	ck.lockSoThatClientWillNotSendMultipleRequests.Lock()
+	defer ck.lockSoThatClientWillNotSendMultipleRequests.Unlock()
+	leader := ck.lastLeader
+	args := PutAppendArgs{Key: key, ClientId: ck.clientId, ClientSerial: ck.getNextSerial(), Value: value, Op: op}
+	reply := PutAppendReply{}
+	ck.tracef("Sending request %+v", args)
+PUT_LOOP:
+	for {
+		ck.tracef("Trying server %d", leader)
+		ok := ck.servers[leader].Call("KVServer.PutAppend", &args, &reply)
+		if !ok {
+			ck.tracef("Sending request %+v failed.", args)
+			reply = PutAppendReply{}
+			leader++
+			if leader >= len(ck.servers) {
+				leader = 0
+			}
+			continue // try again
+		}
+		switch reply.Err {
+		case OK:
+			break PUT_LOOP
+		case ErrKilled:
+			ck.tracef("Killed.")
+			reply = PutAppendReply{}
+			leader++
+			if leader >= len(ck.servers) {
+				leader = 0
+			}
+		case ErrWrongLeader:
+			ck.tracef("Wrong leader.")
+			reply = PutAppendReply{}
+			leader++
+			if leader >= len(ck.servers) {
+				leader = 0
+			}
+		case ErrOutdatedOp:
+			// Okay for put/append ops.
+			break PUT_LOOP
+		case ErrButItIsYouWhoTimedoutFirst:
+			log.Panicln("This should not happen.")
+		}
+	}
 }
 
 func (ck *Clerk) Put(key string, value string) {
