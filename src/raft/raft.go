@@ -681,7 +681,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		return 0, rf.persistent.getCurrentTerm(), false
 	}
 	c := make(chan int)
-	index := 0
+	index := -1
 	term := 0
 	isLeader := false
 	request := EventAppendEvent{
@@ -695,7 +695,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.rwmuKilled.RUnlock()
 	r := <-c
 	if r != 0 {
-		return 0, rf.persistent.getCurrentTerm(), false
+		return -1, rf.persistent.getCurrentTerm(), false
 	}
 
 	return index, term, isLeader
