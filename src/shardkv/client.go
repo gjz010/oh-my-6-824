@@ -60,7 +60,7 @@ func (ck *Clerk) GetClerkByGID(gid int) *ShardKV_Clerk {
 }
 
 const (
-	ShardKVClerkTraceEnabled = true
+	ShardKVClerkTraceEnabled = false
 )
 
 func (ck *Clerk) tracef(msg string, args ...interface{}) {
@@ -135,6 +135,7 @@ func (ck *Clerk) Get(key string) string {
 					if reply.OutDated {
 						ck.kvserial++
 						args.ClientSerial = ck.kvserial
+						continue ONE_GROUP
 					}
 					if reply.TryAgainLater {
 						time.Sleep(100 * time.Millisecond)

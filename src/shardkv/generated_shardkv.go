@@ -355,8 +355,8 @@ type ShardKV_ReplicatedStateMachine struct {
 }
 
 const (
-	ShardKV_TraceEnabled       = true
-	ShardKV_ClientTraceEnabled = true
+	ShardKV_TraceEnabled       = false
+	ShardKV_ClientTraceEnabled = false
 )
 
 func (kv *ShardKV_ReplicatedStateMachine) tracef(msg string, args ...interface{}) {
@@ -678,6 +678,7 @@ OP_LOOP:
 	for {
 		ck.tracef("Trying server %d", leader)
 		ok := ck.servers[leader].Call("ShardKV.ShardKV_Action", &args, &reply)
+		ck.tracef("Req responded %d", leader)
 		if !ok {
 			ck.tracef("Sending request %+v failed.", args)
 			if failOnBadSend {
@@ -692,6 +693,7 @@ OP_LOOP:
 		}
 		switch reply.Err {
 		case OK:
+			ck.tracef("OK")
 			ck.clientSerial++
 			break OP_LOOP
 		case ErrKilled:
@@ -715,11 +717,14 @@ OP_LOOP:
 				leader = 0
 			}
 		case ErrOutdatedOp:
+			ck.tracef("Outdated serial %d", ck.clientSerial)
 			ck.lastLeader = leader
 			ck.clientSerial++
 			return nil, ErrOutdatedOp
 		case ErrButItIsYouWhoTimedoutFirst:
 			log.Panicln("This should not happen.")
+		default:
+			log.Panicf("This (%s) should not happen.", reply.Err)
 		}
 	}
 

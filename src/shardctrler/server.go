@@ -91,7 +91,7 @@ func (state *ShardController_State) TransferAction_Join_Impl(args ShardControlle
 	// If the difference is at most one, give up.
 	// Otherwise, move one.
 	shardCountMap := config.makeShardMap()
-	log.Printf("%v %v", config, shardCountMap)
+	//log.Printf("%v %v", config, shardCountMap)
 	takeouts := make(map[int]int)
 	takeins := make(map[int]int)
 	func() {

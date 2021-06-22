@@ -87,7 +87,10 @@ func (state *ShardKV_State) TransferAction_PutAppend_Impl(args ShardKV_Action_Ar
 		shard.Store[args.Key] = shard.Store[args.Key] + args.Value
 	}
 	shard.CommittedIndices[args.ClientId] = args.ClientSerial
-	fmt.Printf("Writing key %s into shard %d = %s", args.Key, key2shard(args.Key), shard.Store[args.Key])
+	if TransferLogEnabled {
+		fmt.Printf("Writing key %s into shard %d = %s", args.Key, key2shard(args.Key), shard.Store[args.Key])
+	}
+
 	return ShardKV_Action_Reply_PutAppend{Pong: shard.Store[args.Key]}
 }
 func (state *ShardKV_State) TransferAction_Get_Impl(args ShardKV_Action_Args_Get) ShardKV_Action_Reply_Get {
@@ -105,7 +108,9 @@ func (state *ShardKV_State) TransferAction_Get_Impl(args ShardKV_Action_Args_Get
 	}
 	val := shard.Store[args.Key]
 	shard.CommittedIndices[args.ClientId] = args.ClientSerial
-	fmt.Printf("Reading key %s form shard %d = %s", args.Key, key2shard(args.Key), val)
+	if TransferLogEnabled {
+		fmt.Printf("Reading key %s form shard %d = %s", args.Key, key2shard(args.Key), val)
+	}
 	return ShardKV_Action_Reply_Get{Value: val}
 }
 func (state *ShardKV_State) TransferAction_ReadState_Impl(args ShardKV_Action_Args_ReadState) ShardKV_Action_Reply_ReadState {
@@ -137,10 +142,16 @@ func (state *ShardKV_State) TransferAction_RequestConfigChange_Impl(args ShardKV
 		// create unassigned shards
 		for shard, gid := range state.CurrentConfig.Shards {
 			if gid == state.Gid && state.PreviousConfig.Shards[shard] == 0 {
+				if TransferLogEnabled {
+					fmt.Printf("Creating brand new shard %d in group %d\n", shard, gid)
+				}
 				state.Shards[shard] = &ShardData{
 					Store:            make(map[string]string),
 					CommittedIndices: make(map[int64]int64),
 				}
+				state.ShardVersions[shard] = state.CurrentVersion
+			}
+			if gid == state.Gid && state.ShardVersions[shard] == state.CurrentVersion-1 {
 				state.ShardVersions[shard] = state.CurrentVersion
 			}
 		}
@@ -156,6 +167,9 @@ func (state *ShardKV_State) TransferAction_PullShard_Impl(args ShardKV_Action_Ar
 		return ShardKV_Action_Reply_PullShard{Success: false}
 	}
 	shard := state.Shards[args.Shard]
+	if TransferLogEnabled {
+		log.Printf("Pushing shard %d version %d from gid %d: %+v", args.Shard, args.Version, state.Gid, shard)
+	}
 	return ShardKV_Action_Reply_PullShard{
 		Success: true,
 		Shard:   *shard.Clone(),
@@ -169,6 +183,9 @@ func (state *ShardKV_State) TransferAction_InstallShard_Impl(args ShardKV_Action
 	if state.ShardVersions[args.Shard] < args.Version {
 		state.Shards[args.Shard] = args.Data.Clone()
 		state.ShardVersions[args.Shard] = args.Version
+		if TransferLogEnabled {
+			log.Printf("Installing shard %d version %d: %+v", args.Shard, args.Version, args.Data)
+		}
 		return ShardKV_Action_Reply_InstallShard{Magic: 1}
 	}
 	return ShardKV_Action_Reply_InstallShard{Magic: 2}
@@ -213,6 +230,13 @@ func (kv *ShardKV) createGroupClerk(gid int, servers []string) {
 	}
 
 }
+
+func (ck *ShardKV_Clerk) changeLeader() {
+	ck.lastLeader++
+	if ck.lastLeader >= len(ck.servers) {
+		ck.lastLeader = 0
+	}
+}
 func (kv *ShardKV) sidecar() {
 	kv.Ttracef("Sidecar started.")
 	selfClerk := kv.peerClerk[kv.gid]
@@ -250,20 +274,31 @@ RETRY:
 					if kv.peerClerk[source] == nil {
 						log.Panicf("Unrecognized source %d!", source)
 					}
+					kv.Ttracef("Trying to pull shard %d(v=%d) from group %d leader %d", pullArgs.Shard, pullArgs.Version, source, kv.peerClerk[source].lastLeader)
 					edata, err := kv.peerClerk[source].Action_PullShard(pullArgs, false, true, true)
 
 					if err != OK {
 						if err == ErrOutdatedOp {
 							continue FETCH_SHARD
 						}
-						continue RETRY
+						oldLeader := kv.peerClerk[source].lastLeader
+						if err == ErrBadSend || err == ErrKilled {
+							if kv.inner.killed() {
+								return
+							} else {
+								kv.peerClerk[source].changeLeader()
+							}
+						}
+						kv.Ttracef("Failed pulling shard %d(v=%d) from group %d leader %d because %s", pullArgs.Shard, pullArgs.Version, source, oldLeader, err)
+						continue FETCH_SHARD
 					}
 					if !edata.Success {
 						time.Sleep(100 * time.Millisecond)
-
+						continue FETCH_SHARD
 					}
-					kv.Ttracef("Pulled shard %d", shard)
+
 					data = &edata.Shard
+					kv.Ttracef("Pulled shard %d from %d: %+v", shard, source, edata)
 					break
 					// install the shard.
 				}
@@ -283,6 +318,13 @@ RETRY:
 						if err == ErrOutdatedOp {
 							kv.Ttracef("Installed shard %d", shard)
 							break
+						}
+						if err == ErrBadSend || err == ErrKilled {
+							if kv.inner.killed() {
+								return
+							} else {
+								kv.peerClerk[source].changeLeader()
+							}
 						}
 						continue RETRY
 					}
@@ -317,8 +359,9 @@ RETRY:
 }
 
 const (
-	ShardKVDaemonTraceEnabled  = true
-	ShardKVSidecarTraceEnabled = true
+	ShardKVDaemonTraceEnabled  = false
+	ShardKVSidecarTraceEnabled = false
+	TransferLogEnabled         = false
 )
 
 func (kv *ShardKV) Dtracef(msg string, args ...interface{}) {
