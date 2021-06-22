@@ -521,8 +521,8 @@ type ShardController_ReplicatedStateMachine struct {
 }
 
 const (
-	ShardController_TraceEnabled       = true
-	ShardController_ClientTraceEnabled = true
+	ShardController_TraceEnabled       = false
+	ShardController_ClientTraceEnabled = false
 )
 
 func (kv *ShardController_ReplicatedStateMachine) tracef(msg string, args ...interface{}) {
