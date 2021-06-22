@@ -59,10 +59,6 @@ func (ck *Clerk) GetClerkByGID(gid int) *ShardKV_Clerk {
 	return ck.skvClerks[gid]
 }
 
-const (
-	ShardKVClerkTraceEnabled = false
-)
-
 func (ck *Clerk) tracef(msg string, args ...interface{}) {
 	if ShardKVDaemonTraceEnabled {
 		m := fmt.Sprintf(msg, args...)
