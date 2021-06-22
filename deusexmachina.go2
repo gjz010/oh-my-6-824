@@ -1,186 +1,3 @@
-
-struct ActionDef{
-    name: String,
-    argsDef: String,
-    replyDef: String,
-    actionPerform: String
-}
-
-impl ActionDef{
-    fn generateArgsAndReply(&self, rsmName: &str)->String{
-        return format!(r#"type {}_Action_Args_{} struct {{
-    {}
-}}
-type {}_Action_Reply_{} struct {{
-    {}
-}}"#, rsmName, self.name, self.argsDef,rsmName, self.name, self.replyDef);
-    }
-    fn generatePerformActionsBranch(&self, rsmName: &str, id: usize)->String{
-        return format!(r#"case {}:
-    reply := kv.State.TransferAction_{}(*op.Val_{})
-    ret.Ret_{} = &reply
-    break"#, id, self.name, self.name, self.name);
-    }
-    fn generateOperationDescriptorBranch(&self, rsmName: &str)->String{
-        return format!(r#"Val_{} *{}_Action_Args_{}"#, self.name,rsmName, self.name);
-    }
-    fn generateReturnValueDescriptorBranch(&self, rsmName: &str)->String{
-        return format!(r#"Ret_{} *{}_Action_Reply_{}"#, self.name,rsmName, self.name);
-    }
-    fn generateTransferFunction(&self, rsmName: &str)->String{
-        return format!(r#"func (state *{}_State) TransferAction_{}(args {}_Action_Args_{}) {}_Action_Reply_{} {{
-	{}
-}}"#, rsmName, self.name, rsmName, self.name, rsmName, self.name, self.actionPerform);
-    }
-    fn generateClerkTypedStub(&self, rsmName: &str, id: usize)->String{
-        return format!(r#"func (ck *{}_Clerk) Action_{}(op {}_Action_Args_{}) (*{}_Action_Reply_{}, bool) {{
-	descriptor := {}_OperationDescriptor{{
-		ValidID: {},
-		Val_{}:  &op,
-	}}
-	ret, err := ck.PerformGeneralAction(descriptor)
-	if err {{
-		return nil, true
-	}}
-	if ret.ValidID != {} {{
-		log.Panicln("return type check failed.")
-	}}
-	return ret.Ret_{}, false
-}}"#, rsmName, self.name, rsmName, self.name, rsmName, self.name,
-rsmName, id, self.name, id, self.name);
-    }
-    
-}
-struct RSMDef{
-    name: String,
-    shortNameServer: String,
-    shortNameClient: String,
-    stateDef: String,
-    stateInitializer: String,
-    actions: Vec<ActionDef>
-}
-impl RSMDef{
-    fn generateStateDef(&self)->String{
-        format!(r#"type {}_State struct {{
-    {}
-}}
-
-func New_{}_State() {}_State {{
-	return {}_State{{
-	{}
-	}}
-}}"#, self.name, self.stateDef, 
-self.name, self.name, self.name, self.stateInitializer)
-    }
-    fn generateActions(&self)->String{
-        // PerformActions
-        let head = format!(r#"func (kv *{}_RSMState) PerformActions(op *{}_OperationDescriptor, ret *{}_ReturnValueDescriptor) {{
-	ret.ValidID = op.ValidID
-	switch op.ValidID {{"#, self.name, self.name, self.name);
-	    let tail = r#"	}
-}"#;
-        let branches = self.actions.iter()
-        .enumerate()
-        .map(|(i, x)| x.generatePerformActionsBranch(&self.name, i+1)).collect::<Vec<String>>().join("\n");
-        let perform_actions = format!("{}\n{}\n{}", head, branches, tail);
-        // OD & RVD structs
-        let head = format!(r#"type {}_OperationDescriptor struct {{
-	ValidID int"#, self.name);
-	    let tail = "}";
-	    let branches = self.actions.iter()
-	    .map(|x| x.generateOperationDescriptorBranch(&self.name))
-	    .collect::<Vec<String>>().join("\n");
-	    let od = format!("{}\n{}\n{}", head, branches, tail);
-	    let head = format!(r#"type {}_ReturnValueDescriptor struct {{
-	ValidID int"#, self.name);
-	    let tail = "}";
-	    let branches = self.actions.iter()
-	    .map(|x| x.generateReturnValueDescriptorBranch(&self.name))
-	    .collect::<Vec<String>>().join("\n");
-	    let rvd = format!("{}\n{}\n{}", head,  branches, tail);
-	    let transfer_actions = self.actions.iter()
-	    .map(|x| x.generateTransferFunction(&self.name))
-	    .collect::<Vec<String>>().join("\n");
-	    let args_and_replies = self.actions.iter()
-	    .map(|x| x.generateArgsAndReply(&self.name))
-	    .collect::<Vec<String>>().join("\n");
-	    let stubs = self.actions.iter().enumerate()
-	    .map(|(i,x)| x.generateClerkTypedStub(&self.name, i+1))
-	    .collect::<Vec<String>>().join("\n");
-	    format!("{}\n{}\n{}\n{}\n{}\n{}", transfer_actions, args_and_replies, stubs, perform_actions, od, rvd)
-    }
-    fn replaceBody(&self)->String{
-        let mut body = GO_TEMPLATE_BODY.to_string();
-        let replace_rules = vec![
-            ("____DEUSEXMACHINA_ShortName_Server", &self.shortNameServer),
-            ("____DEUSEXMACHINA_ShortName_Clerk", &self.shortNameClient),
-            ("____DEUSEXMACHINA", &self.name),
-        ];
-        for (a, b) in replace_rules.iter(){
-            body = body.replace(a, b);
-        }
-        body
-    }
-    fn generateRSM(&self)->String{
-        format!("{}\n{}\n{}\n{}\n", GO_TEMPLATE_HEADER, self.generateActions(), self.generateStateDef(), self.replaceBody())        
-    }
-}
-
-fn main(){
-    
-    /*
-    let kvstore_def = RSMDef{
-        name: "KVStore".into(),
-        shortNameServer: "KvSt".into(),
-        shortNameClient: "KvCl".into(),
-        stateDef: "Store map[string]string".into(),
-        stateInitializer: "Store: make(map[string]string),".into(),
-        actions: vec![]
-    };
-
-    println!("{}", kvstore_def.generateRSM());
-    */
-    let shard_controller_def = RSMDef{
-        name: "ShardController".into(),
-        shortNameServer: "Shrd".into(),
-        shortNameClient: "SCCl".into(),
-        stateDef: "ConfigVersions []Config".into(),
-        stateInitializer: "ConfigVersions: make([]Config,0),".into(),
-        actions: vec![
-            ActionDef{
-                name: "Join".into(),
-                argsDef: "Servers map[int][]string".into(),
-                replyDef: "Magic int".into(),
-                actionPerform: "return state.TransferAction_Join_Impl(args);".into()
-            },
-            ActionDef{
-                name: "Leave".into(),
-                argsDef: "GIDs []int".into(),
-                replyDef: "Magic int".into(),
-                actionPerform: "return state.TransferAction_Leave_Impl(args);".into()
-            },
-            ActionDef{
-                name: "Move".into(),
-                argsDef: "Shard int\nGID int".into(),
-                replyDef: "Magic int".into(),
-                actionPerform: "return state.TransferAction_Move_Impl(args);".into()
-            },
-            ActionDef{
-                name: "Query".into(),
-                argsDef: "Num int".into(),
-                replyDef: "Config Config".into(),
-                actionPerform: "return state.TransferAction_Query_Impl(args);".into()
-            },
-        ]
-    };
-    println!("{}", shard_controller_def.generateRSM());
-}
-
-
-
-
-// Template.
-const GO_TEMPLATE_HEADER: &str = r#"
 package shardctrler
 
 import (
@@ -194,9 +11,10 @@ import (
 	"6.824/labgob"
 	"6.824/labrpc"
 	"6.824/raft"
-)"#;
+)
 
-/*
+/*CODEGEN_SEP*/
+
 func (kv *____DEUSEXMACHINA_RSMState) PerformActions(op *____DEUSEXMACHINA_OperationDescriptor, ret *____DEUSEXMACHINA_ReturnValueDescriptor) {
 	ret.ValidID = op.ValidID
 	switch op.ValidID {
@@ -244,6 +62,7 @@ func (ck *____DEUSEXMACHINA_Clerk) ____DEUSEXMACHINA_Action_ID(op ____DEUSEXMACH
 	return ret.Ret_ID, false
 }
 
+/*CODEGEN_SEP*/
 // These need to be generated for every RSM.
 
 type ____DEUSEXMACHINA_State struct {
@@ -252,8 +71,7 @@ type ____DEUSEXMACHINA_State struct {
 func New_____DEUSEXMACHINA_State() ____DEUSEXMACHINA_State {
 	return ____DEUSEXMACHINA_State{}
 }
-*/
-const GO_TEMPLATE_BODY: &str = r#"
+
 // Template below. No modification needed.
 
 type ____DEUSEXMACHINA_Op struct {
@@ -297,7 +115,7 @@ func (kv *____DEUSEXMACHINA_RSMState) serialize() []byte {
 	return data
 }
 
-func ____DEUSEXMACHINA_deserializeKVStore(data []byte) *____DEUSEXMACHINA_RSMState {
+func deserializeKVStore(data []byte) *____DEUSEXMACHINA_RSMState {
 	newStore := ____DEUSEXMACHINA_RSMState{}
 	r := bytes.NewBuffer(data)
 	d := labgob.NewDecoder(r)
@@ -556,7 +374,7 @@ MAIN_LOOP:
 				shouldInstall := kv.rf.CondInstallSnapshot(msg.SnapshotTerm, msg.SnapshotIndex, msg.Snapshot)
 				if shouldInstall {
 					// snapshot installation can be seen as installing a bunch of logs.
-					kv.kvstore = ____DEUSEXMACHINA_deserializeKVStore(msg.Snapshot)
+					kv.kvstore = deserializeKVStore(msg.Snapshot)
 				}
 			}
 			newTerm, _ := kv.rf.GetState()
@@ -598,6 +416,20 @@ GRACEFUL_SHUTDOWN:
 	}
 }
 
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Raft to
+// form the fault-tolerant key/value service.
+// me is the index of the current server in servers[].
+// the k/v server should store snapshots through the underlying Raft
+// implementation, which should call persister.SaveStateAndSnapshot() to
+// atomically save the Raft state along with the snapshot.
+// the k/v server should snapshot when Raft's saved state exceeds maxraftstate bytes,
+// in order to allow Raft to garbage-collect its log. if maxraftstate is -1,
+// you don't need to snapshot.
+// StartKVServer() must return quickly, so it should start goroutines
+// for any long-running work.
+//
 func ____DEUSEXMACHINA_StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int) *____DEUSEXMACHINA_ReplicatedStateMachine {
 	// call labgob.Register on structures you want
 	// Go's RPC library to marshall/unmarshall.
@@ -616,7 +448,7 @@ func ____DEUSEXMACHINA_StartServer(servers []*labrpc.ClientEnd, me int, persiste
 	snapshot := kv.persister.ReadSnapshot()
 
 	if snapshot != nil && len(snapshot) != 0 {
-		kv.kvstore = ____DEUSEXMACHINA_deserializeKVStore(snapshot)
+		kv.kvstore = deserializeKVStore(snapshot)
 	} else {
 		kv.kvstore = &____DEUSEXMACHINA_RSMState{State: New_____DEUSEXMACHINA_State(),
 			CommittedIndicesDontAccess: make(map[int64]int64)}
@@ -673,7 +505,7 @@ func (ck *____DEUSEXMACHINA_Clerk) PerformGeneralAction(op ____DEUSEXMACHINA_Ope
 	args := ____DEUSEXMACHINA_ActionArgs{RealOp: op, ClientId: ck.clientId, ClientSerial: ck.getNextSerial()}
 	reply := ____DEUSEXMACHINA_ActionReply{}
 	ck.tracef("Sending request %+v", args)
-OP_LOOP:
+GET_LOOP:
 	for {
 		ck.tracef("Trying server %d", leader)
 		ok := ck.servers[leader].Call("____DEUSEXMACHINA_ReplicatedStateMachine.____DEUSEXMACHINA_Action", &args, &reply)
@@ -687,7 +519,7 @@ OP_LOOP:
 		}
 		switch reply.Err {
 		case OK:
-			break OP_LOOP
+			break GET_LOOP
 		case ErrKilled:
 			ck.tracef("Killed")
 			reply = ____DEUSEXMACHINA_ActionReply{}
@@ -713,4 +545,3 @@ OP_LOOP:
 	val := reply.Value
 	return &val, false
 }
-"#;

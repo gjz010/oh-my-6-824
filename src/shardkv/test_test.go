@@ -1,15 +1,18 @@
 package shardkv
 
-import "6.824/porcupine"
-import "6.824/models"
-import "testing"
-import "strconv"
-import "time"
-import "fmt"
-import "sync/atomic"
-import "sync"
-import "math/rand"
-import "io/ioutil"
+import (
+	"fmt"
+	"io/ioutil"
+	"math/rand"
+	"strconv"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"6.824/models"
+	"6.824/porcupine"
+)
 
 const linearizabilityCheckTimeout = 1 * time.Second
 
@@ -37,10 +40,13 @@ func TestStaticShards(t *testing.T) {
 	n := 10
 	ka := make([]string, n)
 	va := make([]string, n)
+	fmt.Printf("Config made ...\n")
 	for i := 0; i < n; i++ {
 		ka[i] = strconv.Itoa(i) // ensure multiple shards
 		va[i] = randstring(20)
+		fmt.Printf("Put str %d\n", i)
 		ck.Put(ka[i], va[i])
+		fmt.Printf("Putted str %d\n", i)
 	}
 	for i := 0; i < n; i++ {
 		check(t, ck, ka[i], va[i])

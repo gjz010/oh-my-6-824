@@ -8,11 +8,15 @@ package shardkv
 // talks to the group that holds the key's shard.
 //
 
-import "6.824/labrpc"
-import "crypto/rand"
-import "math/big"
-import "6.824/shardctrler"
-import "time"
+import (
+	"crypto/rand"
+	"fmt"
+	"math/big"
+	"time"
+
+	"6.824/labrpc"
+	"6.824/shardctrler"
+)
 
 //
 // which shard is a key in?
@@ -36,10 +40,35 @@ func nrand() int64 {
 }
 
 type Clerk struct {
-	sm       *shardctrler.Clerk
-	config   shardctrler.Config
-	make_end func(string) *labrpc.ClientEnd
+	sm        *shardctrler.Clerk
+	config    shardctrler.Config
+	make_end  func(string) *labrpc.ClientEnd
+	skvClerks map[int]*ShardKV_Clerk
+	kvserial  int64
+	kvid      int64
 	// You will have to modify this struct.
+}
+
+func (ck *Clerk) GetClerkByGID(gid int) *ShardKV_Clerk {
+	if ck.skvClerks[gid] == nil {
+		var ends []*labrpc.ClientEnd
+		for _, end := range ck.config.Groups[gid] {
+			ends = append(ends, ck.make_end(end))
+		}
+	}
+	return ck.skvClerks[gid]
+}
+
+const (
+	ShardKVClerkTraceEnabled = true
+)
+
+func (ck *Clerk) tracef(msg string, args ...interface{}) {
+	if ShardKVDaemonTraceEnabled {
+		m := fmt.Sprintf(msg, args...)
+		now := time.Now()
+		fmt.Printf("[SKvD][%d-%d-%d-%d]%s\n", now.Hour(), now.Minute(), now.Second(), now.Nanosecond(), m)
+	}
 }
 
 //
@@ -55,8 +84,28 @@ func MakeClerk(ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.Client
 	ck := new(Clerk)
 	ck.sm = shardctrler.MakeClerk(ctrlers)
 	ck.make_end = make_end
+	ck.kvserial = 1
+	ck.skvClerks = make(map[int]*ShardKV_Clerk)
+	ck.kvid = nrand()
 	// You'll have to add code here.
 	return ck
+}
+
+func (ck *Clerk) createGroupClerk(gid int, servers []string) *ShardKV_Clerk {
+	var endpoints []*labrpc.ClientEnd
+	for _, server := range servers {
+		endpoints = append(endpoints, ck.make_end(server))
+	}
+	return ShardKV_MakeClerk(endpoints)
+}
+func (ck *Clerk) meetNewPeers() {
+	for gid, servers := range ck.config.Groups {
+		if ck.skvClerks[gid] == nil {
+			ck.tracef("Meeting new group %d", gid)
+			ck.skvClerks[gid] = ck.createGroupClerk(gid, servers)
+		}
+
+	}
 }
 
 //
@@ -66,33 +115,50 @@ func MakeClerk(ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.Client
 // You will have to modify this function.
 //
 func (ck *Clerk) Get(key string) string {
-	args := GetArgs{}
+	args := ShardKV_Action_Args_Get{
+		Key:          key,
+		ClientId:     ck.kvid,
+		ClientSerial: ck.kvserial,
+	}
 	args.Key = key
 
 	for {
 		shard := key2shard(key)
 		gid := ck.config.Shards[shard]
-		if servers, ok := ck.config.Groups[gid]; ok {
-			// try each server for the shard.
-			for si := 0; si < len(servers); si++ {
-				srv := ck.make_end(servers[si])
-				var reply GetReply
-				ok := srv.Call("ShardKV.Get", &args, &reply)
-				if ok && (reply.Err == OK || reply.Err == ErrNoKey) {
+		kvclerk := ck.GetClerkByGID(gid)
+	ONE_GROUP:
+		for {
+			if kvclerk != nil {
+				reply, err := kvclerk.Action_Get(args, false, false, false)
+				if err == OK {
+					ck.tracef("Get success with %+v", reply)
+					if reply.OutDated {
+						ck.kvserial++
+						args.ClientSerial = ck.kvserial
+					}
+					if reply.TryAgainLater {
+						time.Sleep(100 * time.Millisecond)
+						continue ONE_GROUP
+					}
+					if reply.WrongGroup {
+						// change group.
+						break ONE_GROUP
+					}
+
+					ck.kvserial++
 					return reply.Value
+				} else {
+					continue
+					// outdated. Try again
 				}
-				if ok && (reply.Err == ErrWrongGroup) {
-					break
-				}
-				// ... not ok, or ErrWrongLeader
 			}
+			break ONE_GROUP
 		}
 		time.Sleep(100 * time.Millisecond)
 		// ask controler for the latest configuration.
 		ck.config = ck.sm.Query(-1)
+		ck.meetNewPeers()
 	}
-
-	return ""
 }
 
 //
@@ -100,38 +166,56 @@ func (ck *Clerk) Get(key string) string {
 // You will have to modify this function.
 //
 func (ck *Clerk) PutAppend(key string, value string, op string) {
-	args := PutAppendArgs{}
+	args := ShardKV_Action_Args_PutAppend{
+		Key:          key,
+		Value:        value,
+		Op:           op,
+		ClientId:     ck.kvid,
+		ClientSerial: ck.kvserial,
+	}
 	args.Key = key
-	args.Value = value
-	args.Op = op
-
 
 	for {
 		shard := key2shard(key)
 		gid := ck.config.Shards[shard]
-		if servers, ok := ck.config.Groups[gid]; ok {
-			for si := 0; si < len(servers); si++ {
-				srv := ck.make_end(servers[si])
-				var reply PutAppendReply
-				ok := srv.Call("ShardKV.PutAppend", &args, &reply)
-				if ok && reply.Err == OK {
+		kvclerk := ck.GetClerkByGID(gid)
+	ONE_GROUP:
+		for {
+			if kvclerk != nil {
+				reply, err := kvclerk.Action_PutAppend(args, false, false, false)
+				if err == OK {
+					ck.tracef("Put success with %+v", reply)
+					if reply.OutDated {
+						ck.kvserial++
+						return
+					}
+					if reply.TryAgainLater {
+						time.Sleep(100 * time.Millisecond)
+						continue ONE_GROUP
+					}
+					if reply.WrongGroup {
+						// change group.
+						break ONE_GROUP
+					}
+					ck.kvserial++
 					return
+				} else {
+					continue
+					// outdated. Try again
 				}
-				if ok && reply.Err == ErrWrongGroup {
-					break
-				}
-				// ... not ok, or ErrWrongLeader
 			}
+			break ONE_GROUP
 		}
 		time.Sleep(100 * time.Millisecond)
 		// ask controler for the latest configuration.
 		ck.config = ck.sm.Query(-1)
+		ck.meetNewPeers()
 	}
 }
 
 func (ck *Clerk) Put(key string, value string) {
-	ck.PutAppend(key, value, "Put")
+	ck.PutAppend(key, value, OpPut)
 }
 func (ck *Clerk) Append(key string, value string) {
-	ck.PutAppend(key, value, "Append")
+	ck.PutAppend(key, value, OpAppend)
 }

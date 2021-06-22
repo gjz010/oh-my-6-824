@@ -641,7 +641,9 @@ func (rf *Raft) sendAppendEntriesAsync(i int) {
 			j := i
 			go (func() {
 				reply := &AppendEntriesReply{}
+				rf.tracef("Sending AE to %d prepared (%+v)", i, args)
 				ok := rf.sendAppendEntries(j, args, reply)
+				rf.tracef("Sending AE to %d done", i)
 				if ok {
 					rf.rwmuKilled.RLock()
 					if !rf.killed() {
@@ -928,8 +930,8 @@ func (rf *Raft) electionProperty(req *RequestVoteArgs) bool {
 }
 
 const (
-	TraceEnabled bool = true
-	TraceVerbose bool = true
+	TraceEnabled bool = false
+	TraceVerbose bool = false
 )
 
 func (rf *Raft) getLastRealID() int {
@@ -1105,7 +1107,7 @@ func (rf *Raft) termLeader() {
 				lastLogID, _, _ := rf.getLastLogInfo()
 
 				if TraceVerbose {
-					rf.tracef("Inserting log %d(id=%d, %v).", lastLogID, realID, ev.command)
+					rf.tracef("Inserting log %d(id=%d, %+v).", lastLogID, realID, ev.command)
 				}
 				if lastLogID <= rf.volatile.commitIndex {
 					panic("Trying to override committed index!")

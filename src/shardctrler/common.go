@@ -30,10 +30,16 @@ type Config struct {
 
 const (
 	OK = "OK"
+	//ErrNoKey       = "ErrNoKey"
+	ErrWrongLeader                = "ErrWrongLeader"
+	ErrOutdatedOp                 = "ErrOutdatedOp"
+	ErrKilled                     = "ErrKilled"
+	ErrButItIsYouWhoTimedoutFirst = "ErrButItIsYouWhoTimedoutFirst"
 )
 
 type Err string
 
+/*
 type JoinArgs struct {
 	Servers map[int][]string // new GID -> servers mappings
 }
@@ -71,3 +77,4 @@ type QueryReply struct {
 	Err         Err
 	Config      Config
 }
+*/
