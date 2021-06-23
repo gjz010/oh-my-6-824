@@ -372,6 +372,7 @@ RETRY:
 
 					}
 					kv.Ttracef("Upgraded to version %d", config.Num)
+					break
 				}
 
 			}
