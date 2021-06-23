@@ -307,7 +307,7 @@ RETRY:
 					// install the shard.
 				}
 
-				//INSTALL_SHARD:
+			INSTALL_SHARD:
 				for {
 					if kv.inner.killed() {
 						return
@@ -324,22 +324,18 @@ RETRY:
 							break
 						}
 						if err == ErrBadSend || err == ErrKilled {
-							if kv.inner.killed() {
-								return
-							} else {
-								kv.peerClerk[source].changeLeader()
-							}
+							kv.peerClerk[source].changeLeader()
+							continue INSTALL_SHARD
 						}
 						if err == ErrWrongLeader {
 							selfClerk.clientSerial++
+							continue RETRY
 						}
-						continue RETRY
 					}
 					kv.Ttracef("Installed shard %d version %d (%d)", shard, state.CurrentVersion, ret.Magic)
 					break
 				}
 			}
-			continue RETRY
 		} else {
 			// check new version
 			config := kv.ctrlerClerk.Query(state.CurrentVersion + 1)
@@ -349,17 +345,35 @@ RETRY:
 				for gid, servers := range config.Groups {
 					kv.createGroupClerk(gid, servers)
 				}
-				// configure the leader version
-				upgradeArgs := ShardKV_Action_Args_RequestConfigChange{
-					Config:     config,
-					NewVersion: config.Num,
+			CHANGE_CONFIG:
+				for {
+					if kv.inner.killed() {
+						return
+					}
+					// configure the leader version
+					upgradeArgs := ShardKV_Action_Args_RequestConfigChange{
+						Config:     config,
+						NewVersion: config.Num,
+					}
+					_, err := selfClerk.Action_RequestConfigChange(upgradeArgs, true, true, true)
+					if err != OK {
+						if err == ErrOutdatedOp {
+							break
+						}
+						if err == ErrBadSend || err == ErrKilled {
+							// don't change leader.
+							continue CHANGE_CONFIG
+						}
+						if err == ErrWrongLeader {
+							selfClerk.clientSerial++
+							time.Sleep(100 * time.Millisecond)
+							continue RETRY
+						}
+
+					}
+					kv.Ttracef("Upgraded to version %d", config.Num)
 				}
-				_, err := selfClerk.Action_RequestConfigChange(upgradeArgs, true, true, true)
-				if err != OK {
-					time.Sleep(100 * time.Millisecond)
-					continue RETRY
-				}
-				kv.Ttracef("Upgraded to version %d", config.Num)
+
 			}
 		}
 	}
