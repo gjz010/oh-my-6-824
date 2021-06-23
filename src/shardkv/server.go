@@ -330,6 +330,9 @@ RETRY:
 								kv.peerClerk[source].changeLeader()
 							}
 						}
+						if err == ErrWrongLeader {
+							selfClerk.clientSerial++
+						}
 						continue RETRY
 					}
 					kv.Ttracef("Installed shard %d version %d (%d)", shard, state.CurrentVersion, ret.Magic)
@@ -539,7 +542,7 @@ func (ck *ShardKV_Clerk) Action_PutAppend(op ShardKV_Action_Args_PutAppend, fail
 		return nil, err
 	}
 	if ret.ValidID != 1 {
-		log.Panicln("return type check failed.")
+		log.Panicf("return type check failed %+v.", ret)
 	}
 	return ret.Ret_PutAppend, OK
 }
