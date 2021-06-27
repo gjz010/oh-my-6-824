@@ -571,7 +571,7 @@ func (ck *ShardKV_Clerk) Action_Get(op ShardKV_Action_Args_Get, failOnWrongLeade
 		return nil, err
 	}
 	if ret.ValidID != 2 {
-		log.Panicln("return type check failed.")
+		log.Panicf("return type check failed %+v.", ret)
 	}
 	return ret.Ret_Get, OK
 }
@@ -585,7 +585,7 @@ func (ck *ShardKV_Clerk) Action_RequestConfigChange(op ShardKV_Action_Args_Reque
 		return nil, err
 	}
 	if ret.ValidID != 3 {
-		log.Panicln("return type check failed.")
+		log.Panicf("return type check failed %+v.", ret)
 	}
 	return ret.Ret_RequestConfigChange, OK
 }
@@ -599,7 +599,7 @@ func (ck *ShardKV_Clerk) Action_ReadState(op ShardKV_Action_Args_ReadState, fail
 		return nil, err
 	}
 	if ret.ValidID != 4 {
-		log.Panicln("return type check failed.")
+		log.Panicf("return type check failed %+v.", ret)
 	}
 	return ret.Ret_ReadState, OK
 }
@@ -613,7 +613,7 @@ func (ck *ShardKV_Clerk) Action_PullShard(op ShardKV_Action_Args_PullShard, fail
 		return nil, err
 	}
 	if ret.ValidID != 5 {
-		log.Panicln("return type check failed.")
+		log.Panicf("return type check failed %+v.", ret)
 	}
 	return ret.Ret_PullShard, OK
 }
@@ -627,7 +627,7 @@ func (ck *ShardKV_Clerk) Action_AckPullShard(op ShardKV_Action_Args_AckPullShard
 		return nil, err
 	}
 	if ret.ValidID != 6 {
-		log.Panicln("return type check failed.")
+		log.Panicf("return type check failed %+v.", ret)
 	}
 	return ret.Ret_AckPullShard, OK
 }
@@ -641,7 +641,7 @@ func (ck *ShardKV_Clerk) Action_InstallShard(op ShardKV_Action_Args_InstallShard
 		return nil, err
 	}
 	if ret.ValidID != 7 {
-		log.Panicln("return type check failed.")
+		log.Panicf("return type check failed %+v.", ret)
 	}
 	return ret.Ret_InstallShard, OK
 }
@@ -802,13 +802,13 @@ type ShardKV_ReplicatedStateMachine struct {
 }
 
 const (
-	ShardKV_TraceEnabled       = false
-	ShardKV_ClientTraceEnabled = false
+	ShardKV_TraceEnabled       = true
+	ShardKV_ClientTraceEnabled = true
 )
 const (
-	ShardKVDaemonTraceEnabled  = false
-	ShardKVSidecarTraceEnabled = false
-	TransferLogEnabled         = false
+	ShardKVDaemonTraceEnabled  = true
+	ShardKVSidecarTraceEnabled = true
+	TransferLogEnabled         = true
 )
 
 func (kv *ShardKV_ReplicatedStateMachine) tracef(msg string, args ...interface{}) {
@@ -939,7 +939,7 @@ func (kv *ShardKV_ReplicatedStateMachine) printAllPendingRequests(term int) {
 	for k := range kv.pendingRequests {
 		keys = append(keys, k)
 	}
-	kv.tracef("Pending requests for term %d: %+v", term, keys)
+//	kv.tracef("Pending requests for term %d: %+v", term, keys)
 }
 func (kv *ShardKV_ReplicatedStateMachine) eventLoop() {
 	duration := 100 * time.Millisecond
