@@ -802,13 +802,13 @@ type ShardKV_ReplicatedStateMachine struct {
 }
 
 const (
-	ShardKV_TraceEnabled       = true
-	ShardKV_ClientTraceEnabled = true
+	ShardKV_TraceEnabled       = false
+	ShardKV_ClientTraceEnabled = false
 )
 const (
-	ShardKVDaemonTraceEnabled  = true
-	ShardKVSidecarTraceEnabled = true
-	TransferLogEnabled         = true
+	ShardKVDaemonTraceEnabled  = false
+	ShardKVSidecarTraceEnabled = false
+	TransferLogEnabled         = false
 )
 
 func (kv *ShardKV_ReplicatedStateMachine) tracef(msg string, args ...interface{}) {
